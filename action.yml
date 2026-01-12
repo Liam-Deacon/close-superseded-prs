@@ -17,6 +17,10 @@ inputs:
     description: Comma-separated keywords to detect superseded PRs. Leave blank to use defaults.
     required: false
     default: ""
+  mark_duplicate_comment:
+    description: Add a "Duplicate of #<new PR>" comment to superseded PRs.
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
@@ -86,6 +90,7 @@ runs:
         SUPERSEDED_LABEL: ${{ inputs.superseded_label }}
         COMMENT_TEMPLATE_PATH: ${{ inputs.comment_template_path }}
         COMMENT_FOOTER: ${{ inputs.comment_footer }}
+        MARK_DUPLICATE_COMMENT: ${{ inputs.mark_duplicate_comment }}
       with:
         script: |
           const fs = require('fs');
@@ -99,6 +104,9 @@ runs:
           const supersededLabel = (process.env.SUPERSEDED_LABEL || '').trim();
           const templatePath = (process.env.COMMENT_TEMPLATE_PATH || '').trim();
           const commentFooter = (process.env.COMMENT_FOOTER || '').trim();
+          const markDuplicate = ['true', '1', 'yes', 'y', 'on'].includes(
+            (process.env.MARK_DUPLICATE_COMMENT || '').trim().toLowerCase(),
+          );
           const footerBlock = commentFooter ? `\n---\n${commentFooter}` : '';
 
           for (const prNumber of supersededPrs) {
@@ -140,19 +148,28 @@ runs:
 
               comment = comment.trimEnd() + footerBlock;
 
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: comment,
-              });
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: comment,
+                });
 
-              console.log(`Added supersession comment to PR #${prNumber}`);
+                console.log(`Added supersession comment to PR #${prNumber}`);
 
-              // Close the PR
-              await github.rest.pulls.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
+                if (markDuplicate) {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    body: `Duplicate of #${newPrNumber}`,
+                  });
+                }
+
+                // Close the PR
+                await github.rest.pulls.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
                 pull_number: prNumber,
                 state: 'closed',
               });
