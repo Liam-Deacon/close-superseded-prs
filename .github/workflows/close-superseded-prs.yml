@@ -20,6 +20,11 @@ on:
         required: false
         default: "false"
         type: string
+      ignored_branches:
+        description: Comma-separated branch patterns to ignore (matches base or head).
+        required: false
+        default: ""
+        type: string
       comment_template_path:
         description: Path to a comment template file in the caller repo. Leave blank to use the default comment.
         required: false
@@ -45,8 +50,34 @@ jobs:
         uses: actions/github-script@v7
         env:
           KEYWORDS: ${{ inputs.keywords }}
+          IGNORED_BRANCHES: ${{ inputs.ignored_branches }}
         with:
           script: |
+            const ignoredInput = (process.env.IGNORED_BRANCHES || '').trim();
+            const ignoredBranches = ignoredInput
+              ? ignoredInput.split(/[,\n]/).map(b => b.trim()).filter(Boolean)
+              : [];
+            const baseRef = context.payload.pull_request?.base?.ref || '';
+            const headRef = context.payload.pull_request?.head?.ref || '';
+
+            const matchesPattern = (pattern, value) => {
+              const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+              const regexText = '^' + escaped
+                .replace(/\\*\\*/g, '.*')
+                .replace(/\\*/g, '[^/]*')
+                .replace(/\\?/g, '[^/]') + '$';
+              return new RegExp(regexText).test(value);
+            };
+
+            const ignored = ignoredBranches.some(pattern =>
+              matchesPattern(pattern, baseRef) || matchesPattern(pattern, headRef),
+            );
+
+            if (ignored) {
+              core.setOutput('superseded_prs', JSON.stringify([]));
+              return [];
+            }
+
             const DEFAULT_KEYWORDS = [
               "supersedes",
               "superseded",
