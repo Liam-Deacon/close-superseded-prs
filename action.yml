@@ -31,6 +31,11 @@ runs:
         KEYWORDS: ${{ inputs.keywords }}
       with:
         script: |
+          if (!context.payload.pull_request?.merged) {
+            core.setOutput('superseded_prs', JSON.stringify([]));
+            return [];
+          }
+
           const DEFAULT_KEYWORDS = [
             "supersedes",
             "superseded",
