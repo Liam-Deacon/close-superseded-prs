@@ -10,6 +10,11 @@ on:
         required: false
         default: superseded
         type: string
+      comment_template_path:
+        description: Path to a comment template file in the caller repo. Leave blank to use the default comment.
+        required: false
+        default: ""
+        type: string
       comment_footer:
         description: Footer text appended to the auto-comment. Leave blank to omit.
         required: false
@@ -63,20 +68,31 @@ jobs:
 
             return uniquePrs;
 
+      - name: Checkout repository for template
+        if: steps.parse.outputs.superseded_prs != '[]' && inputs.comment_template_path != ''
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Comment and close superseded PRs
         if: steps.parse.outputs.superseded_prs != '[]'
         uses: actions/github-script@v7
         env:
           SUPERSEDED_LABEL: ${{ inputs.superseded_label }}
+          COMMENT_TEMPLATE_PATH: ${{ inputs.comment_template_path }}
           COMMENT_FOOTER: ${{ inputs.comment_footer }}
         with:
           script: |
+            const fs = require('fs');
+            const path = require('path');
+
             const supersededPrs = JSON.parse('${{ steps.parse.outputs.superseded_prs }}');
             const newPrNumber = ${{ steps.parse.outputs.new_pr_number }};
             const newPrTitle = `${{ steps.parse.outputs.new_pr_title }}`;
             const newPrUrl = `${{ steps.parse.outputs.new_pr_url }}`;
 
             const supersededLabel = (process.env.SUPERSEDED_LABEL || '').trim();
+            const templatePath = (process.env.COMMENT_TEMPLATE_PATH || '').trim();
             const commentFooter = (process.env.COMMENT_FOOTER || '').trim();
             const footerBlock = commentFooter ? `\n---\n${commentFooter}` : '';
 
@@ -94,12 +110,30 @@ jobs:
                   continue;
                 }
 
-                // Add comment explaining the supersession
-                const comment = `## This PR has been superseded\n\n` +
-                  `This pull request has been superseded by **#${newPrNumber}**.\n\n` +
-                  `**New PR:** [${newPrTitle}](${newPrUrl})\n\n` +
-                  `The work from this PR was carried forward into the new PR, so this PR is being closed automatically.` +
-                  footerBlock;
+                let baseComment;
+                if (templatePath) {
+                  const resolvedPath = path.resolve(process.env.GITHUB_WORKSPACE || process.cwd(), templatePath);
+                  baseComment = fs.readFileSync(resolvedPath, 'utf8');
+                } else {
+                  baseComment = `## This PR has been superseded\n\n` +
+                    `This pull request has been superseded by **#${newPrNumber}**.\n\n` +
+                    `**New PR:** [${newPrTitle}](${newPrUrl})\n\n` +
+                    `The work from this PR was carried forward into the new PR, so this PR is being closed automatically.`;
+                }
+
+                const replacements = {
+                  '{{new_pr_number}}': newPrNumber,
+                  '{{new_pr_title}}': newPrTitle,
+                  '{{new_pr_url}}': newPrUrl,
+                  '{{superseded_pr_number}}': prNumber,
+                };
+
+                let comment = baseComment;
+                for (const [token, value] of Object.entries(replacements)) {
+                  comment = comment.split(token).join(String(value));
+                }
+
+                comment = comment.trimEnd() + footerBlock;
 
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
