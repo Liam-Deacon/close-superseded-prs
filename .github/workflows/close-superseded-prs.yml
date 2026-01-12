@@ -10,6 +10,11 @@ on:
         required: false
         default: superseded
         type: string
+      superseded_labels:
+        description: Comma-separated labels to apply to superseded pull requests. Leave blank to skip.
+        required: false
+        default: ""
+        type: string
       keywords:
         description: Comma-separated keywords to detect superseded PRs. Leave blank to use defaults.
         required: false
@@ -135,6 +140,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           SUPERSEDED_LABEL: ${{ inputs.superseded_label }}
+          SUPERSEDED_LABELS: ${{ inputs.superseded_labels }}
           COMMENT_TEMPLATE_PATH: ${{ inputs.comment_template_path }}
           COMMENT_FOOTER: ${{ inputs.comment_footer }}
           MARK_DUPLICATE_COMMENT: ${{ inputs.mark_duplicate_comment }}
@@ -149,6 +155,14 @@ jobs:
             const newPrUrl = `${{ steps.parse.outputs.new_pr_url }}`;
 
             const supersededLabel = (process.env.SUPERSEDED_LABEL || '').trim();
+            const labelsInput = (process.env.SUPERSEDED_LABELS || '').trim();
+            const labels = labelsInput
+              ? labelsInput.split(/[,\n]/).map(l => l.trim()).filter(Boolean)
+              : [];
+            if (supersededLabel) {
+              labels.push(supersededLabel);
+            }
+            const uniqueLabels = [...new Set(labels)];
             const templatePath = (process.env.COMMENT_TEMPLATE_PATH || '').trim();
             const commentFooter = (process.env.COMMENT_FOOTER || '').trim();
             const markDuplicate = ['true', '1', 'yes', 'y', 'on'].includes(
@@ -223,7 +237,7 @@ jobs:
 
                 console.log(`Closed PR #${prNumber}`);
 
-                if (!supersededLabel) {
+                if (uniqueLabels.length === 0) {
                   continue;
                 }
 
@@ -233,11 +247,11 @@ jobs:
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     issue_number: prNumber,
-                    labels: [supersededLabel],
+                    labels: uniqueLabels,
                   });
                 } catch (labelError) {
                   // Label might not exist, that's OK
-                  console.log(`Could not add '${supersededLabel}' label: ${labelError.message}`);
+                  console.log(`Could not add labels: ${labelError.message}`);
                 }
 
               } catch (error) {
